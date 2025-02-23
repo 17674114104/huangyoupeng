@@ -1,0 +1,24 @@
+env: prod
+
+kafka:
+  brokers: kafka1:9092,kafka2:9092
+  source-topic: input_orders
+  sink-topic: output_analytics
+  group-id: flink-consumer-group
+
+clickhouse:
+  url: jdbc:clickhouse://ch1:8123,ch2:8123/dwd
+  username: flink_writer
+  password: s3cr3tP@ss
+  batch-size: 1000
+
+mysql:
+  jdbc-url: jdbc:mysql://mysql-master:3306/dim?useSSL=false
+  username: dim_reader
+  password: Dim@1234
+  connection-pool-size: 20
+
+redis:
+  nodes: redis1:6379,redis2:6379
+  password: Redis@2023
+  max-total: 50
