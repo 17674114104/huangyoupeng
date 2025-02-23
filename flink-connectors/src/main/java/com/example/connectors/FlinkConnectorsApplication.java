@@ -1,13 +1,13 @@
-package com.example.flink_jobs;
+package com.example.connectors;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class FlinkJobsApplication {
+public class FlinkConnectorsApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(FlinkJobsApplication.class, args);
+        SpringApplication.run(FlinkConnectorsApplication.class, args);
     }
 
 }

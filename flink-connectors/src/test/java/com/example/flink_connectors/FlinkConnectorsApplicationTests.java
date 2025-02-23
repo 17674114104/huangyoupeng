@@ -1,4 +1,4 @@
-package com.example.flink_connectors;
+package com.example.connectors;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
