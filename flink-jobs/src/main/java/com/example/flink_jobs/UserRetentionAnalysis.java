@@ -31,7 +31,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
 
-public class UserRetentionAnalysis2 {
+public class UserRetentionAnalysis {
 
     public static void main(String[] args) throws Exception {
         FlinkConfig flinkConfig = new FlinkConfig(args);
