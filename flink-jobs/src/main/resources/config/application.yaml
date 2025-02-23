@@ -1,0 +1,10 @@
+mysql:
+  hostname: localhost
+  port: 3306
+  username: test_user
+  password: test_password
+  database: test_database
+  table: test_table
+
+kafka:
+  bootstrap-servers: localhost:9092

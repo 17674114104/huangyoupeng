@@ -2,19 +2,32 @@ package com.example.config;
 
 import org.apache.flink.api.java.utils.ParameterTool;
 
+import java.io.IOException;
+
 public class FlinkConfig {
     private final ParameterTool parameterTool;
 
-    public FlinkConfig(String[] args) {
-        this.parameterTool = ParameterTool.fromArgs(args);
+//    public FlinkConfig(String[] args) {
+//        this.parameterTool = ParameterTool.fromArgs(args);
+//    }
+
+    public FlinkConfig(String[] args) throws IOException {
+        String configFilePath = System.getProperty("config.file.path", "/default/path/config.properties");
+        parameterTool = ParameterTool.fromPropertiesFile(configFilePath);
     }
+    // 从系统属性获取配置文件路径
+
 
     public String getKafkaBootstrapServers() {
         return parameterTool.get("kafka.bootstrap-servers", "localhost:9092");
     }
 
-    public String getMysqlUrl() {
-        return parameterTool.get("mysql.url", "jdbc:mysql://localhost:3306/test_database");
+    public String getMysqlHostname() {
+        return parameterTool.get("mysql.hostname", "localhost");
+    }
+
+    public String getMysqlPort() {
+        return parameterTool.get("mysql.port", "3306");
     }
 
     public String getMysqlUsername() {
@@ -23,6 +36,14 @@ public class FlinkConfig {
 
     public String getMysqlPassword() {
         return parameterTool.get("mysql.password", "test_password");
+    }
+
+    public String getMysqlDatabase() {
+        return parameterTool.get("mysql.database", "test_database");
+    }
+
+    public String getMysqlTable() {
+        return parameterTool.get("mysql.table", "test_table");
     }
 
     public String getHiveMetastoreUris() {

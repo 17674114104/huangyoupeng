@@ -5,6 +5,7 @@ import com.example.connectors.KafkaConnector;
 import com.example.jobs.pojo.EventType;
 import com.example.jobs.pojo.UserEvent;
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -12,29 +13,28 @@ import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
+import org.apache.flink.connector.jdbc.JdbcExecutionOptions;
+import org.apache.flink.connector.jdbc.JdbcSink;
+import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
-import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.util.Collector;
 
 import java.io.IOException;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
+import java.sql.Date;
+import java.time.*;
 import java.util.HashMap;
 import java.util.Map;
 
 public class UserRetentionAnalysis {
 
     public static void main(String[] args) throws Exception {
-        FlinkConfig flinkConfig = new FlinkConfig(args);
 
+        FlinkConfig flinkConfig = new FlinkConfig(args);
         Configuration conf = new Configuration();
         conf.setString("taskmanager.memory.network.min", "512mb");
         conf.setString("taskmanager.memory.network.fraction", "0.1");
@@ -45,22 +45,31 @@ public class UserRetentionAnalysis {
         ExecutionConfig executionConfig = env.getConfig();
         env.getConfig().setAutoWatermarkInterval(1000);
 
-        DataStream<UserEvent> registerEvents = env.addSource(KafkaConnector.createConsumer("register-topic", flinkConfig.getKafkaBootstrapServers()))
-                .name("Kafka-Register-Events")
-                .uid("source-kafka-register-events");
+        KafkaSource<String> registerSource = KafkaConnector.createSource("register-topic", flinkConfig.getKafkaBootstrapServers());
+        KafkaSource<String> loginSource = KafkaConnector.createSource("login-topic", flinkConfig.getKafkaBootstrapServers());
 
-        DataStream<UserEvent> loginEvents = env.addSource(KafkaConnector.createConsumer("login-topic", flinkConfig.getKafkaBootstrapServers()))
-                .name("Kafka-Login-Events")
-                .uid("source-kafka-login-events");
+        DataStreamSource<String> registerEvents = env.fromSource(registerSource, WatermarkStrategy.noWatermarks(), "Kafka-Register-Events");
 
-        DataStream<UserEvent> registrations = registerEvents
+        DataStreamSource<String> loginEvents = env.fromSource(loginSource, WatermarkStrategy.noWatermarks(), "Kafka-Login-Events");
+
+
+        DataStream<UserEvent> registrations = registerEvents.map(item->{
+            String[] split = item.split(",");
+            //userId,registerTime,
+            return new UserEvent(split[0], EventType.REGISTER, Long.parseLong(split[1]), split[2]);
+        }).returns(Types.POJO(UserEvent.class))
+        .map((item) -> {
+            System.out.println("Received registration: " + item);
+            return item;
+        }).filter(event -> EventType.REGISTER.equals(event.eventType));;
+
+
+        DataStream<UserEvent> logins = loginEvents.map(item->{
+                    String[] split = item.split(",");
+                    //userId,loginTime,
+                    return new UserEvent(split[0], EventType.LOGIN, Long.parseLong(split[1]), split[2]);
+                }).returns(Types.POJO(UserEvent.class))
                 .map((item) -> {
-                    System.out.println("Received registration: " + item);
-                    return item;
-                })
-                .filter(event -> EventType.REGISTER.equals(event.eventType));
-
-        DataStream<UserEvent> logins = loginEvents.map((item) -> {
                     System.out.println("Received login: " + item);
                     return item;
                 })
@@ -69,70 +78,50 @@ public class UserRetentionAnalysis {
         DataStream<Tuple2<String, LocalDate>> dailyRegistrations = registrations
                 .keyBy(event -> event.userId)
                 .process(new DailyRegistrationProcessor())
-                .name("Registration-Deduplication")
-                .uid("process-registration-deduplication");
+                .name("Registration-Deduplication");
 
         DataStream<Tuple2<String, LocalDate>> dailyLogins = logins
                 .keyBy(event -> event.userId)
                 .process(new DailyLoginProcessor())
-                .name("Login-Deduplication")
-                .uid("process-login-deduplication");
+                .name("Login-Deduplication");
 
         DataStream<Tuple3<LocalDate, Integer, String>> userLoginRetens = dailyLogins
                 .keyBy(t -> t.f0)
                 .connect(dailyRegistrations.keyBy(t -> t.f0))
                 .process(new UserRetentionCalculator())
-                .name("User-Retention-Calculation")
-                .uid("connect-process-user-retention-calculation");
+                .name("User-Retention-Calculation");
 
         userLoginRetens.keyBy(t -> t.f0)
                 .connect(dailyRegistrations.keyBy(t -> t.f1))
                 .process(new RetentionCalculator())
-                .name("Retention-Metrics-Calculation")
-                .uid("process-retention-metrics-calculation")
-                .addSink(new MySQLSink(flinkConfig));
+                .flatMap((RetentionResult  item, Collector<RetentionData> out)-> {
+                    LocalDate registerDate = item.registerDate;
+                    Map<Integer, Double> retentionRates = item.retentionRates;
+                    for (Map.Entry<Integer,Double> entry : retentionRates.entrySet()){
+                       out.collect(new RetentionData(registerDate,entry.getKey(),entry.getValue()));
+                    }
+                }).returns(Types.POJO(RetentionData.class))
+                .addSink(JdbcSink.sink(
+                        "INSERT INTO user_retention (register_date, retention_days, user_id) VALUES (?, ?, ?)",
+                        (ps, data) -> {
+                            ps.setDate(1, Date.valueOf(((RetentionData) data).registerDate));
+                            ps.setInt(2, (Integer) ((RetentionData) data).day); // retentionDays
+                            ps.setDouble(3, ((RetentionData) data).rate);
+                        },
+                        new JdbcExecutionOptions.Builder()
+                                .withBatchSize(1000) // 批量大小
+                                .withBatchIntervalMs(1000) // 批量间隔
+                                .build(),
+                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                                .withDriverName("com.mysql.cj.jdbc.Driver")
+                                .withUrl(flinkConfig.getMysqlHostname())
+                                .withUsername(flinkConfig.getMysqlUsername())
+                                .withPassword(flinkConfig.getMysqlPassword())
+                                .build()
+                ))
+                .name("Retention-Metrics-Calculation");
 
         env.execute("User Retention Analysis");
-    }
-
-    public static class MySQLSink extends RichSinkFunction<Tuple3<LocalDate, Integer, String>> {
-        private transient Connection connection;
-        private transient PreparedStatement preparedStatement;
-        private final FlinkConfig flinkConfig;
-
-        public MySQLSink(FlinkConfig flinkConfig) {
-            this.flinkConfig = flinkConfig;
-        }
-
-        @Override
-        public void open(Configuration parameters) throws Exception {
-            super.open(parameters);
-            connection = ClickHouseConnector.getConnection(
-                    flinkConfig.getClickHouseUrl(),
-                    flinkConfig.getClickHouseUser(),
-                    flinkConfig.getClickHousePassword());
-            String sql = "INSERT INTO user_retention (register_date, retention_days, user_id) VALUES (?, ?, ?)";
-            preparedStatement = connection.prepareStatement(sql);
-        }
-
-        @Override
-        public void invoke(Tuple3<LocalDate, Integer, String> value, Context context) throws SQLException {
-            preparedStatement.setDate(1, java.sql.Date.valueOf(value.f0));
-            preparedStatement.setInt(2, value.f1);
-            preparedStatement.setString(3, value.f2);
-            preparedStatement.executeUpdate();
-        }
-
-        @Override
-        public void close() throws Exception {
-            super.close();
-            if (preparedStatement != null) {
-                preparedStatement.close();
-            }
-            if (connection != null) {
-                connection.close();
-            }
-        }
     }
 
     public static class DailyRegistrationProcessor extends KeyedProcessFunction<String, UserEvent, Tuple2<String, LocalDate>> {
@@ -306,11 +295,33 @@ public class UserRetentionAnalysis {
     }
 
     public static LocalDate toLocalDate(long timestamp) {
-        return LocalDate.ofInstant(Instant.ofEpochMilli(timestamp), ZoneId.systemDefault());
+
+        // 将时间戳转换为 Instant
+        Instant instant = Instant.ofEpochMilli(timestamp);
+        // 使用系统默认时区将 Instant 转换为 ZonedDateTime
+        ZonedDateTime zonedDateTime = ZonedDateTime.ofInstant(instant, ZoneId.systemDefault());
+        // 从 ZonedDateTime 提取 LocalDate
+       return  zonedDateTime.toLocalDate();
     }
 
     public static long toEpochMilli(LocalDate date) {
         return date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
+
+    public static class RetentionData {
+        public LocalDate registerDate;
+        public Integer day;
+        public Double rate;
+
+        public RetentionData() {
+
+        }
+
+        public RetentionData(LocalDate registerDate, Integer day, Double rate) {
+            this.registerDate = registerDate;
+            this.day = day;
+            this.rate = rate;
+        }
     }
 
     public static class RetentionResult {

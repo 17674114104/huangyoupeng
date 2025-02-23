@@ -13,6 +13,8 @@ public class UserEvent  {
         this.eventTime = eventTime;
         this.eventDate = eventDate;
     }
+    public UserEvent() {
+    }
 
     public String getUserId() {
         return userId;
