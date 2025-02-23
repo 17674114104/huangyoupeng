@@ -1,4 +1,4 @@
-package com.example.flink_jobs.pojo;
+package com.example.jobs.pojo;
 
 
 public class UserEvent  {

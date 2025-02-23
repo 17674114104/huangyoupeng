@@ -1,4 +1,4 @@
-package com.example.flink_jobs.pojo;
+package com.example.jobs.pojo;
 
 public enum EventType {
     REGISTER,    // 注册事件

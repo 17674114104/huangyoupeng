@@ -1,10 +1,9 @@
-package org.example.jobs;
+package com.example.jobs;
 
 import com.example.config.FlinkConfig;
-import com.example.connectors.ClickHouseConnector;
 import com.example.connectors.KafkaConnector;
-import com.example.flink_jobs.pojo.EventType;
-import com.example.flink_jobs.pojo.UserEvent;
+import com.example.jobs.pojo.EventType;
+import com.example.jobs.pojo.UserEvent;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;

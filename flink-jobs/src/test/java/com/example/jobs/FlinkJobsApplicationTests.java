@@ -1,4 +1,4 @@
-package com.example.flink_jobs;
+package com.example.jobs;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
